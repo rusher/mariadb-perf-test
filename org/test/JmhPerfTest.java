@@ -32,13 +32,17 @@ public class JmhPerfTest {
             sharedConnectionNoCache = DriverManager.getConnection("jdbc:mysql://localhost:3306/testj?user=root&useServerPrepStmts=true&characterEncoding=UTF-8&cacheCallableStmts=false&cachePrepStmts=false");
             sharedConnectionText = DriverManager.getConnection("jdbc:mysql://localhost:3306/testj?user=root&useServerPrepStmts=false&characterEncoding=UTF-8");
             sharedConnectionRewrite = DriverManager.getConnection("jdbc:mysql://localhost:3306/testj?user=root&rewriteBatchedStatements=true");
-            sharedFailoverConnection = DriverManager.getConnection("jdbc:mysql:replication://localhost:3306,localhost:3306/testj?user=root&useServerPrepStmts=true&characterEncoding=UTF-8&validConnectionTimeout=0");
-
+            try {
+                sharedFailoverConnection = DriverManager.getConnection("jdbc:mysql:replication://localhost:3306.localhost:3306/testj?user=root&useServerPrepStmts=true&characterEncoding=UTF-8&validConnectionTimeout=0");
+                sharedStatementFailover = sharedFailoverConnection.createStatement();
+            } catch (SQLException sqlException) {
+                sharedFailoverConnection = null;
+                sharedStatementFailover = null;
+            }
             sharedStatement = sharedConnection.createStatement();
-            sharedStatementFailover = sharedFailoverConnection.createStatement();
 
-            //use black hole engine, so test are not stored and to avoid server disk access
-            //if "java.sql.SQLSyntaxErrorException: Unknown storage engine 'BLACKHOLE'", restart database
+            //use black hole engine. so test are not stored and to avoid server disk access
+            //if "java.sql.SQLSyntaxErrorException: Unknown storage engine 'BLACKHOLE'". restart database
             sharedStatement.execute("INSTALL SONAME 'ha_blackhole'");
 
             sharedStatement.execute("DROP TABLE IF EXISTS PerfTextQuery ");
@@ -48,7 +52,7 @@ public class JmhPerfTest {
             sharedStatement.execute("CREATE TABLE PerfTextQueryBlob(blobValue LONGBLOB NOT NULL) ENGINE = BLACKHOLE");
 
             sharedStatement.execute("DROP TABLE IF EXISTS PerfReadQuery ");
-            sharedStatement.execute("CREATE TABLE PerfReadQuery(charValue VARCHAR(100) NOT NULL)");
+            sharedStatement.execute("CREATE TABLE PerfReadQuery(charValue VARCHAR(100) NOT NULL )");
 
             sharedStatement.execute("DROP TABLE IF EXISTS PerfReadQueryBig ");
             sharedStatement.execute("CREATE TABLE PerfReadQueryBig(charValue VARCHAR(5000), charValue2 VARCHAR(5000) NOT NULL)");
@@ -65,27 +69,45 @@ public class JmhPerfTest {
                     + "RETURN a; \n"
                     + "END");
 
-
-            PreparedStatement preparedStatement = sharedConnectionRewrite.prepareStatement("INSERT INTO PerfReadQuery (charValue) values (?)");
-            for (int i = 0; i < 1000; i++) {
-                preparedStatement.setString(1, "你好" + (counter++) + "'");
-                preparedStatement.addBatch();
-            }
-            preparedStatement.executeBatch();
+			try {
+				PreparedStatement preparedStatement = sharedConnectionRewrite.prepareStatement("INSERT INTO PerfReadQuery (charValue) values (?)");
+				for (int i = 0; i < 1000; i++) {
+					preparedStatement.setString(1, "abc" + (counter++) + "'");
+					preparedStatement.addBatch();
+				}
+				preparedStatement.executeBatch();
+			} catch (Exception e) {
+				PreparedStatement preparedStatement = sharedConnection.prepareStatement("INSERT INTO PerfReadQuery (charValue) values (?)");
+				for (int i = 0; i < 1000; i++) {
+					preparedStatement.setString(1, "abc" + (counter++) + "'");
+					preparedStatement.addBatch();
+				}
+				preparedStatement.executeBatch();
+			}
 
             byte[] arr = new byte[5000];
             for (int i = 0; i < 5000; i++) {
                 arr[i] = (byte)(i % 128);
             }
             String data = new String(arr);
+			try {
+				PreparedStatement preparedStatement2 = sharedConnectionRewrite.prepareStatement("INSERT INTO PerfReadQueryBig (charValue, charValue2) values (?, ?)");
+				for (int i = 0; i < 1000; i++) {
+					preparedStatement2.setString(1, data);
+					preparedStatement2.setString(2, data);
+					preparedStatement2.addBatch();
+				}
+				preparedStatement2.executeBatch();
+			} catch (Exception e) {
+				PreparedStatement preparedStatement2 = sharedConnection.prepareStatement("INSERT INTO PerfReadQueryBig (charValue, charValue2) values (?, ?)");
+				for (int i = 0; i < 1000; i++) {
+					preparedStatement2.setString(1, data);
+					preparedStatement2.setString(2, data);
+					preparedStatement2.addBatch();
+				}
+				preparedStatement2.executeBatch();
+			}
 
-            PreparedStatement preparedStatement2 = sharedConnectionRewrite.prepareStatement("INSERT INTO PerfReadQueryBig (charValue, charValue2) values (?, ?)");
-            for (int i = 0; i < 1000; i++) {
-                preparedStatement2.setString(1, data);
-                preparedStatement2.setString(2, data);
-                preparedStatement2.addBatch();
-            }
-            preparedStatement2.executeBatch();
 
             sharedStatementRewrite = sharedConnectionRewrite.createStatement();
         }
@@ -95,31 +117,33 @@ public class JmhPerfTest {
             sharedConnection.close();
             sharedConnectionRewrite.close();
             sharedConnectionText.close();
-            sharedFailoverConnection.close();
+            if (sharedFailoverConnection != null) {
+                sharedFailoverConnection.close();
+            }
         }
     }
 
     @Benchmark
     public void executeOneInsert(MyState state) throws Throwable {
-        state.sharedStatement.execute("INSERT INTO PerfTextQuery (charValue) values ('你好" + (state.counter++) + "')");
+        state.sharedStatement.execute("INSERT INTO PerfTextQuery (charValue) values ('abc" + (state.counter++) + "')");
     }
 
     @Benchmark
     public void executeOneInsertFailover(MyState state) throws Throwable {
-        state.sharedStatementFailover.execute("INSERT INTO PerfTextQuery (charValue) values ('你好" + (state.counter++) + "')");
+        state.sharedStatementFailover.execute("INSERT INTO PerfTextQuery (charValue) values ('abc" + (state.counter++) + "')");
     }
 
     @Benchmark
     public void executeOneInsertBinaryCache(MyState state) throws Throwable {
         PreparedStatement preparedStatement = state.sharedConnection.prepareStatement("INSERT INTO PerfTextQuery (charValue) values (?)");
-        preparedStatement.setString(1, "你好" + (state.counter++) + "'");
+        preparedStatement.setString(1, "abc" + (state.counter++) + "'");
         preparedStatement.execute();
     }
 
     @Benchmark
     public void executeOneInsertBinaryNoCache(MyState state) throws Throwable {
         PreparedStatement preparedStatement = state.sharedConnectionNoCache.prepareStatement("INSERT INTO PerfTextQuery (charValue) values (?)");
-        preparedStatement.setString(1, "你好" + (state.counter++) + "'");
+        preparedStatement.setString(1, "abc" + (state.counter++) + "'");
         preparedStatement.execute();
     }
 
@@ -127,7 +151,7 @@ public class JmhPerfTest {
     @Benchmark
     public void executeOneInsertBinaryFailoverCache(MyState state) throws Throwable {
         PreparedStatement preparedStatement = state.sharedFailoverConnection.prepareStatement("INSERT INTO PerfTextQuery (charValue) values (?)");
-        preparedStatement.setString(1, "你好" + (state.counter++) + "'");
+        preparedStatement.setString(1, "abc" + (state.counter++) + "'");
         preparedStatement.execute();
     }
 
@@ -148,12 +172,19 @@ public class JmhPerfTest {
 
     @Benchmark()
     public void executeSelect1000rows(MyState state) throws Throwable {
-        state.sharedStatement.executeQuery("SELECT * FROM PerfReadQuery");
+        ResultSet rs = state.sharedStatement.executeQuery("SELECT * FROM PerfReadQuery");
+        while (rs.next()) {
+            rs.getString(1);
+        }
     }
 
     @Benchmark()
     public void executeSelectBig1000rows(MyState state) throws Throwable {
-        state.sharedStatement.executeQuery("SELECT * FROM PerfReadQueryBig");
+        ResultSet rs = state.sharedStatement.executeQuery("SELECT * FROM PerfReadQueryBig");
+        while (rs.next()) {
+            rs.getString(1);
+            rs.getString(2);
+        }
     }
 
     @Benchmark
@@ -185,7 +216,7 @@ public class JmhPerfTest {
     public void executeBatch1000Insert(MyState state) throws Throwable {
         PreparedStatement preparedStatement = state.sharedConnectionText.prepareStatement("INSERT INTO PerfTextQuery (charValue) values (?)");
         for (int i = 0; i < 1000; i++) {
-            preparedStatement.setString(1, "你好" + (state.counter++) + "'");
+            preparedStatement.setString(1, "abc" + (state.counter++) + "'");
             preparedStatement.addBatch();
         }
         preparedStatement.executeBatch();
@@ -196,7 +227,7 @@ public class JmhPerfTest {
     public void executeBatch1000InsertBinaryCache(MyState state) throws Throwable {
         PreparedStatement preparedStatement = state.sharedConnection.prepareStatement("INSERT INTO PerfTextQuery (charValue) values (?)");
         for (int i = 0; i < 1000; i++) {
-            preparedStatement.setString(1, "你好" + (state.counter++) + "'");
+            preparedStatement.setString(1, "abc" + (state.counter++) + "'");
             preparedStatement.addBatch();
         }
         preparedStatement.executeBatch();
@@ -207,7 +238,7 @@ public class JmhPerfTest {
     public void executeBatch1000InsertBinaryNoCache(MyState state) throws Throwable {
         PreparedStatement preparedStatement = state.sharedConnectionNoCache.prepareStatement("INSERT INTO PerfTextQuery (charValue) values (?)");
         for (int i = 0; i < 1000; i++) {
-            preparedStatement.setString(1, "你好" + (state.counter++) + "'");
+            preparedStatement.setString(1, "abc" + (state.counter++) + "'");
             preparedStatement.addBatch();
         }
         preparedStatement.executeBatch();
@@ -217,7 +248,7 @@ public class JmhPerfTest {
     public void executeBatch1000InsertRewrite(MyState state) throws Throwable {
         PreparedStatement preparedStatement = state.sharedConnectionRewrite.prepareStatement("INSERT INTO PerfTextQuery (charValue) values (?)");
         for (int i = 0; i < 10000; i++) {
-            preparedStatement.setString(1, "你好" + (state.counter++) + "'");
+            preparedStatement.setString(1, "abc" + (state.counter++) + "'");
             preparedStatement.addBatch();
         }
         preparedStatement.executeBatch();

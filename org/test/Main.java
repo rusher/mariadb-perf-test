@@ -1,3 +1,5 @@
+package org.test;
+
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -10,8 +12,8 @@ public class Main {
     public static void main(String[] args) throws Exception {
         Options opts = new OptionsBuilder()
                 .include("JmhPerfTest.*")
-                .warmupIterations(20)
-                .measurementIterations(20)
+                .warmupIterations(10)
+                .measurementIterations(10)
                 .measurementTime(TimeValue.milliseconds(1000))
                 .forks(5)
                 .result(args[0])
