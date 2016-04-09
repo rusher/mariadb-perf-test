@@ -12,10 +12,10 @@ public class Main {
     public static void main(String[] args) throws Exception {
         Options opts = new OptionsBuilder()
                 .include("JmhPerfTest.*")
-                .warmupIterations(10)
-                .measurementIterations(10)
+                .warmupIterations(5)
+                .measurementIterations(7)
                 .measurementTime(TimeValue.milliseconds(1000))
-                .forks(5)
+                .forks(1)
                 .result(args[0])
                 .resultFormat(ResultFormatType.CSV)
                 .build();
